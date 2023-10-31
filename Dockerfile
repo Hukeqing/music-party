@@ -3,7 +3,9 @@ FROM ubuntu:20.04
 ENV NODE_VERSION=16.14.2
 ARG WORK_DIR=/root/music-party
 
-COPY ./* ${WORK_DIR}/*
+EXPOSE 3000
+
+COPY ./* ${WORK_DIR}/
 
 WORKDIR ${WORK_DIR}
 
