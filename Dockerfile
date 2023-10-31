@@ -1,24 +1,16 @@
 FROM ubuntu:20.04
 
-#RUN \
-#  apt update && \
-#  apt -y upgrade && \
-#  apt -y install gcc-8 g++-8 gdb make dpkg-dev flex adoptopenjdk-8-hotspot && \
-#  apt -y install python python-virtualenv python3 python3-virtualenv && \
-#  mkdir -p /usr/local/cjudger/venv/ && \
-#  virtualenv --no-setuptools --no-pip --no-wheel -p /usr/bin/python2 /usr/local/cjudger/venv/py2 && \
-#  virtualenv --no-setuptools --no-pip --no-wheel -p /usr/bin/python3 /usr/local/cjudger/venv/py3 && \
-#  ln -s /usr/local/cjudger/venv/py2/bin/python2 /usr/local/cjudger/py2 && \
-#  ln -s /usr/local/cjudger/venv/py3/bin/python3 /usr/local/cjudger/py3 && \
-#  rm -rf /var/lib/apt/lists/*
+ENV NODE_VERSION=16.14.2
 
 RUN \
   apt update && \
   apt -y upgrade && \
   apt -y install ffmpeg curl && \
-  curl https://raw.githubusercontent.com/creationix/nvm/master/install.sh | bash  && \
-  source ~/.bashrc && \
-  nvm install 16 && \
-  npm i
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash && \
+  /root/.nvm/nvm.sh && nvm install ${NODE_VERSION} && \
+  /root/.nvm/nvm.sh && nvm use ${NODE_VERSION} && \
+  /root/.nvm/nvm.sh && nvm alias default ${NODE_VERSION} && \
+
+ENV PATH="/root/.nvm/versions/node/v${NODE_VERSION}/bin/:${PATH}"
 
 CMD npm start
