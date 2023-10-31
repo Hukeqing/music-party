@@ -15,7 +15,9 @@ FROM ubuntu:20.04
 RUN \
   apt update && \
   apt -y upgrade && \
-  apt -y install ffmpeg nvm && \
+  apt -y install ffmpeg curl && \
+  curl https://raw.githubusercontent.com/creationix/nvm/master/install.sh | bash  && \
+  source ~/.bashrc && \
   nvm install 16 && \
   npm i
 
