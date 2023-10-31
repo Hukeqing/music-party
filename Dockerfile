@@ -3,7 +3,7 @@ FROM ubuntu:20.04
 ENV NODE_VERSION=16.14.2
 ARG WORK_DIR=/root/music-party
 
-COPY ./dist ${WORK_DIR}
+COPY ./* ${WORK_DIR}/*
 
 RUN \
   apt update && \
