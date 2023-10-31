@@ -19,6 +19,7 @@ RUN \
   nvm install ${NODE_VERSION} && \
   nvm use ${NODE_VERSION} && \
   nvm alias default ${NODE_VERSION} && \
+  cd ${WORK_DIR} && ls && \
   npm i
 
 ENV PATH="/root/.nvm/versions/node/v${NODE_VERSION}/bin/:${PATH}"
