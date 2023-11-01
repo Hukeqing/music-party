@@ -1,0 +1,6 @@
+*
+!database
+!routes
+!*.js
+!*.json
+!*.html

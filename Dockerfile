@@ -5,7 +5,7 @@ ARG WORK_DIR=/root/music-party
 
 EXPOSE 3000
 
-COPY ./* ${WORK_DIR}/
+COPY . ./
 
 WORKDIR ${WORK_DIR}
 
