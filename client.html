@@ -72,6 +72,8 @@
 window.onload = function() {
 'use strict';
 
+const API_URL = '/music'
+
 // SECTION: constants
 const FILE_CHUNK_SIZE = 1024 * 1024;
 const MEDIA_FRAGMENT_DURATION = 10;
@@ -152,7 +154,7 @@ function askLogin() {
         const account = evt.target.account.value;
         const password = evt.target.password.value;
         
-        fetch(`/account/login`, {
+        fetch(`${API_URL}/account/login`, {
             method: 'POST',
             body: JSON.stringify({account, password}),
             headers: {'Content-Type': 'application/json'}
@@ -214,7 +216,7 @@ function askLogin() {
 async function party() {
 
     const sessionID = Cookies.get('session-id')
-    const user_login_validated = await (await fetch(`/account/validate-login`,{
+    const user_login_validated = await (await fetch(`${API_URL}/account/validate-login`,{
         method: 'POST',
         body: JSON.stringify({ sessionID }),
         headers: { 'Content-Type': 'application/json' }
@@ -313,7 +315,7 @@ async function party() {
 
         async function init() {
             const estFragments = Math.ceil((await getMediaDuration(file, fileType)) / MEDIA_FRAGMENT_DURATION);
-            referenceID = + (await (await fetch('/playlist/pre-upload', {
+            referenceID = + (await (await fetch(`${API_URL}/playlist/pre-upload`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
@@ -331,7 +333,7 @@ async function party() {
         async function abort() {
             if(currentChunkIndex !== -1 && referenceID !== -1) {
                 currentChunkIndex = -1;
-                const abort_result = await (await fetch(`/playlist/`, {
+                const abort_result = await (await fetch(`${API_URL}/playlist/`, {
                     method: 'DELETE',
                     body: JSON.stringify({id: referenceID, sessionID}),
                     headers: {'Content-Type': 'application/json'},
@@ -360,7 +362,7 @@ async function party() {
                 sessionID, referenceID, chunkIndex: currentChunkIndex
             })
 
-            const upload_result = await (await fetch(`/playlist/upload-chunk?${searchParams.toString()}`, {
+            const upload_result = await (await fetch(`${API_URL}/playlist/upload-chunk?${searchParams.toString()}`, {
                 method: 'POST',
                 body: chunk,
                 headers: {'Content-Type': 'application/octet-stream'}
@@ -407,7 +409,7 @@ async function party() {
 
     async function getPlaylist(playlist = null) {
         const user_playlists = playlist || await (await fetch(
-            `/playlist/user-playlist?${new URLSearchParams({sessionID}).toString()}`)
+            `${API_URL}/playlist/user-playlist?${new URLSearchParams({sessionID}).toString()}`)
         ).json()
         if(user_playlists.length) {
             for(const media of user_playlists) {
@@ -431,7 +433,7 @@ async function party() {
         if(referenceID > 0) query.referenceID = referenceID;
         return await (
             await fetch(
-                `/playlist/${url}-upload-status?${new URLSearchParams(query).toString()}`
+                `${API_URL}/playlist/${url}-upload-status?${new URLSearchParams(query).toString()}`
             )
         ).json()
     }
@@ -1122,7 +1124,7 @@ async function party() {
                 renameBtn.textContent = '更新标题'
                 renameBtn.onclick = async () => {
                     if(titleText.value && titleText.value !== title) {
-                        const update_result = (await fetch(`/playlist/update-title`, {
+                        const update_result = (await fetch(`${API_URL}/playlist/update-title`, {
                             method: 'POST',
                             body: JSON.stringify({ sessionID, id, title: titleText.value }),
                             headers: { 'Content-Type': 'application/json' }
@@ -1149,7 +1151,7 @@ async function party() {
                             showNotification('请再点击一次以确认删除', 'info', 10000);
                             last_click = Date.now();
                         } else {
-                            const delete_result = await (await fetch(`/playlist`, {
+                            const delete_result = await (await fetch(`${API_URL}/playlist`, {
                                 method: 'DELETE',
                                 body: JSON.stringify({ sessionID, id }),
                                 headers: { 'Content-Type': 'application/json' }
