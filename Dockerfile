@@ -2,12 +2,10 @@ FROM ubuntu:20.04
 
 ENV NODE_VERSION=16.14.2
 ARG WORK_DIR=/root/music-party
-
+WORKDIR ${WORK_DIR}
 EXPOSE 3000
 
 COPY . ./
-
-WORKDIR ${WORK_DIR}
 
 RUN \
   apt update && \
