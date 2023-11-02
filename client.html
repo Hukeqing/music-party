@@ -451,8 +451,8 @@ async function party() {
         const media_list = roomMode.activate ? roomMode.playlist : playStates.playlist
         const media = media_list[playStates.playing]
         media.type === 'audio' ?
-            setAudioHls(`/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`) :
-            setVideoHls(`/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`)
+            setAudioHls(`${API_URL}/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`) :
+            setVideoHls(`${API_URL}/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`)
 
         if(document.querySelector("#playlist-main")) {
             document.querySelector("#playlist-main .media.playing").classList.remove('playing');
