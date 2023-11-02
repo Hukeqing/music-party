@@ -22,4 +22,6 @@ RUN \
   cd ${WORK_DIR} && ls && \
   npm i
 
+ENV PATH="/root/.nvm/versions/node/v${NODE_VERSION}/bin/:${PATH}"
+
 CMD npm start
