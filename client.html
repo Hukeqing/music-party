@@ -25,7 +25,6 @@ const API_URL = '/music'
 const FILE_CHUNK_SIZE = 1024 * 1024;
 const MEDIA_FRAGMENT_DURATION = 10;
 const MAX_RETRY = 3;
-let logged_in = false;
 
 // SECTION: icon
 const formatIcon = className => `<i class='bi bi-${className}'></i>`;
@@ -95,12 +94,9 @@ function shuffle(arr) {
 
 // SECTION: pages
 function askLogin() {
-
     if(Cookies.get('session-id')) {
-        logged_in = true;
         return party();
     }
-    logged_in = false;
 
     function submitLogin(evt) {
         evt.preventDefault();
@@ -167,7 +163,6 @@ function askLogin() {
 }
 
 async function party() {
-
     const sessionID = Cookies.get('session-id')
     const user_login_validated = await (await fetch(`${API_URL}/account/validate-login`,{
         method: 'POST',
