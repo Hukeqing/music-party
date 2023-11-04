@@ -170,9 +170,26 @@ async function party() {
         headers: { 'Content-Type': 'application/json' }
     })).json();
     if(!user_login_validated) {
+        showNotification('登陆凭证已过期!', 'warn')
         Cookies.remove('session-id');
-        askLogin();
+        return askLogin();
     }
+
+    // check hls capability, if not capable return to login page
+    let HLSType = null;
+
+    (function () {
+        if(document.createElement('video').canPlayType('application/x-mpegURL')) {
+            HLSType = 'browser'
+        } else if(Hls.isSupported()) {
+            HLSType = 'library'
+        } else {
+            Cookies.remove('session-id');
+            askLogin();
+            showNotification('您的浏览器似乎不支持通过HLS播放!')
+        }
+    })();
+
 
     // init states
     const PLAY_WAYS = ['loop', 'single', 'random', 'playlist']
