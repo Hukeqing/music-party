@@ -19,7 +19,7 @@
 window.onload = function() {
 'use strict';
 
-const API_URL = '/music'
+const BASE_URL = ''
 
 // SECTION: constants
 const FILE_CHUNK_SIZE = 1024 * 1024;
@@ -103,7 +103,7 @@ function askLogin() {
         const account = evt.target.account.value;
         const password = evt.target.password.value;
         
-        fetch(`${API_URL}/account/login`, {
+        fetch(`${BASE_URL}/account/login`, {
             method: 'POST',
             body: JSON.stringify({account, password}),
             headers: {'Content-Type': 'application/json'}
@@ -164,7 +164,7 @@ function askLogin() {
 
 async function party() {
     const sessionID = Cookies.get('session-id')
-    const user_login_validated = await (await fetch(`${API_URL}/account/validate-login`,{
+    const user_login_validated = await (await fetch(`${BASE_URL}/account/validate-login`,{
         method: 'POST',
         body: JSON.stringify({ sessionID }),
         headers: { 'Content-Type': 'application/json' }
@@ -272,7 +272,7 @@ async function party() {
 
         async function init() {
             const estFragments = Math.ceil((await getMediaDuration(file, fileType)) / MEDIA_FRAGMENT_DURATION);
-            referenceID = + (await (await fetch(`${API_URL}/playlist/pre-upload`, {
+            referenceID = + (await (await fetch(`${BASE_URL}/playlist/pre-upload`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
@@ -290,7 +290,7 @@ async function party() {
         async function abort() {
             if(currentChunkIndex !== -1 && referenceID !== -1) {
                 currentChunkIndex = -1;
-                const abort_result = await (await fetch(`${API_URL}/playlist/`, {
+                const abort_result = await (await fetch(`${BASE_URL}/playlist/`, {
                     method: 'DELETE',
                     body: JSON.stringify({id: referenceID, sessionID}),
                     headers: {'Content-Type': 'application/json'},
@@ -319,7 +319,7 @@ async function party() {
                 sessionID, referenceID, chunkIndex: currentChunkIndex
             })
 
-            const upload_result = await (await fetch(`${API_URL}/playlist/upload-chunk?${searchParams.toString()}`, {
+            const upload_result = await (await fetch(`${BASE_URL}/playlist/upload-chunk?${searchParams.toString()}`, {
                 method: 'POST',
                 body: chunk,
                 headers: {'Content-Type': 'application/octet-stream'}
@@ -366,7 +366,7 @@ async function party() {
 
     async function getPlaylist(playlist = null) {
         const user_playlists = playlist || await (await fetch(
-            `${API_URL}/playlist/user-playlist?${new URLSearchParams({sessionID}).toString()}`)
+            `${BASE_URL}/playlist/user-playlist?${new URLSearchParams({sessionID}).toString()}`)
         ).json()
         if(user_playlists.length) {
             for(const media of user_playlists) {
@@ -390,7 +390,7 @@ async function party() {
         if(referenceID > 0) query.referenceID = referenceID;
         return await (
             await fetch(
-                `${API_URL}/playlist/${url}-upload-status?${new URLSearchParams(query).toString()}`
+                `${BASE_URL}/playlist/${url}-upload-status?${new URLSearchParams(query).toString()}`
             )
         ).json()
     }
@@ -408,8 +408,8 @@ async function party() {
         const media_list = roomMode.activate ? roomMode.playlist : playStates.playlist
         const media = media_list[playStates.playing]
         media.type === 'audio' ?
-            setAudioHls(`${API_URL}/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`) :
-            setVideoHls(`${API_URL}/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`)
+            setAudioHls(`${BASE_URL}/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`) :
+            setVideoHls(`${BASE_URL}/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`)
 
         if(document.querySelector("#playlist-main")) {
             document.querySelector("#playlist-main .media.playing").classList.remove('playing');
@@ -1081,7 +1081,7 @@ async function party() {
                 renameBtn.textContent = '更新标题'
                 renameBtn.onclick = async () => {
                     if(titleText.value && titleText.value !== title) {
-                        const update_result = (await fetch(`${API_URL}/playlist/update-title`, {
+                        const update_result = (await fetch(`${BASE_URL}/playlist/update-title`, {
                             method: 'POST',
                             body: JSON.stringify({ sessionID, id, title: titleText.value }),
                             headers: { 'Content-Type': 'application/json' }
@@ -1108,7 +1108,7 @@ async function party() {
                             showNotification('请再点击一次以确认删除', 'info', 10000);
                             last_click = Date.now();
                         } else {
-                            const delete_result = await (await fetch(`${API_URL}/playlist`, {
+                            const delete_result = await (await fetch(`${BASE_URL}/playlist`, {
                                 method: 'DELETE',
                                 body: JSON.stringify({ sessionID, id }),
                                 headers: { 'Content-Type': 'application/json' }
