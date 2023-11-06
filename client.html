@@ -19,12 +19,11 @@
 window.onload = function() {
 'use strict';
 
-const BASE_URL = ''
-
 // SECTION: constants
 const FILE_CHUNK_SIZE = 1024 * 1024;
 const MEDIA_FRAGMENT_DURATION = 10;
 const MAX_RETRY = 3;
+const BASE_URL = /^(.*)\/$/.exec(window.location.href)[1];
 
 // SECTION: icon
 const formatIcon = className => `<i class='bi bi-${className}'></i>`;
@@ -45,11 +44,13 @@ const ListUl = formatIcon('list-ul');
 const VolumeUpFill = formatIcon('volume-up-fill');
 const VolumeDownFill = formatIcon('volume-down-fill');
 const VinylFill = formatIcon('vinyl-fill');
+const PencilFill = formatIcon('pencil-fill');
 
 // SECTION: components
 const notificationContainer = document.getElementById('notification-container');
 const popupContainer = document.getElementById('popup-container');
 const popupWindow = document.getElementById('popup-window');
+const contextMenuContainer = document.getElementById('context-menu-container');
 const main = document.getElementById('main');
 
 // SECTION: notification
@@ -85,6 +86,30 @@ popupContainer.onclick = evt => {
     if(evt.target === popupContainer) {
         closePopup();
     }
+}
+
+// SECTION: context menu
+let onTextMenuClose = null;
+
+function showContextMenu(elem, onclose = null) {
+    elem.classList.add('context-menu');
+    contextMenuContainer.appendChild(elem);
+    contextMenuContainer.style.pointerEvents = 'initial';
+    onTextMenuClose = onclose;
+}
+function closeContextMenu() {
+    contextMenuContainer.innerHTML = ''
+    contextMenuContainer.style.pointerEvents = 'none';
+    onTextMenuClose && onTextMenuClose();
+    onTextMenuClose = null;
+}
+contextMenuContainer.onclick = evt => {
+    if(evt.target !== contextMenuContainer) return;
+    closeContextMenu();
+}
+contextMenuContainer.oncontextmenu = evt => {
+    evt.preventDefault();
+    closeContextMenu();
 }
 
 // SECTION: utils
@@ -164,6 +189,7 @@ function askLogin() {
 
 async function party() {
     const sessionID = Cookies.get('session-id')
+    // validate current login information
     const user_login_validated = await (await fetch(`${BASE_URL}/account/validate-login`,{
         method: 'POST',
         body: JSON.stringify({ sessionID }),
@@ -200,20 +226,20 @@ async function party() {
 
     const playStates = {
         playlist: {},
-        playing: 0, order: [],
+        playing: -1, order: [],
         random_order: [],
         _how: 'loop',
         set how(way) {
-            this._how = way;
             how_to_play.innerHTML = 
                 way === 'playlist' ? ListUl :
                 way === 'single' ? RepeatOne : 
                 way === 'random' ? Shuffle : 
                 Repeat
             
-            if(way === 'random') {
-                playStates.random_order = shuffle(playStates.order)
-            }
+            const playing_id = getFollowOrder()[this.playing]
+            if(way === 'random') this.random_order = shuffle(this.order)
+            this._how = way;
+            this.playing = getFollowOrder().indexOf(playing_id)
         },
         get how() {
             return this._how;
@@ -224,6 +250,7 @@ async function party() {
     let manual_update_media_time = false,
         manual_toggle_play = false,
         can_sync_media_time = false;
+    let pause_after = 0;
     
     const roomMode = { 
         activate: false, playlist: {}, order: [], extra: {},
@@ -250,7 +277,7 @@ async function party() {
     function loadHls(bound_elem, type) {
         const hls = createHLSController(bound_elem, type);
 
-        return async (url, startPlay = true)=>{
+        return async (url, startPlay)=>{
             hls(url)
             if(displaying.type !== type) {
                 if(displaying.elem) {
@@ -277,6 +304,14 @@ async function party() {
             }
             media_elem.src = url;
         })
+    }
+
+    function getFollowOrder() {
+        return (
+            roomMode.activate ? roomMode.order : 
+            playStates.how === 'random' ? playStates.random_order : 
+            playStates.order
+        )
     }
 
     async function uploadFile(file, rename, progressControl) {
@@ -381,22 +416,42 @@ async function party() {
         init();
     }
 
-    async function getPlaylist(playlist = null) {
-        const user_playlists = playlist || await (await fetch(
+    async function getPlaylist() {
+        const user_playlists = await (await fetch(
             `${BASE_URL}/playlist/user-playlist?${new URLSearchParams({sessionID}).toString()}`)
         ).json()
-        if(user_playlists.length) {
-            for(const media of user_playlists) {
-                if(roomMode.activate && playlist) {
-                    roomMode.playlist[media.id] = media;
-                    continue;
-                }
-                playStates.playlist[media.id] = media;
-                playStates.order.includes(media.id) || playStates.order.push(media.id);
+        const updatedIDs = user_playlists.map(e=>e.id);
+
+        const playing_id = getFollowOrder()[playStates.playing]
+        let removed_playing = false;
+        // check if any media removed
+        Object.keys(playStates.playlist).filter(e=>!updatedIDs.includes(+e))
+        .forEach(removedMedia => {
+            let media_id = +removedMedia;
+            if(playing_id === media_id) removed_playing = true;
+            playStates.order = playStates.order.filter(e => e !== media_id);
+            delete playStates.playlist[media_id];
+            if(roomMode.activate) {
+                roomMode.order = roomMode.order.filter(e => e !== media_id);
+                delete roomMode.playlist[media_id];
             }
+        })
+
+        // update details and add any media not added
+        for(const media of user_playlists) {
+            playStates.playlist[media.id] = media;
+            playStates.order.includes(media.id) || playStates.order.push(media.id);
+
+            roomMode.activate &&
+            (roomMode.order.includes(media.id) || roomMode.order.push(media.id));
         }
-        if(roomMode.activate && !playlist) {
-            roomMode.requestUpdatePlaylist()
+
+        roomMode.activate && roomMode.requestUpdatePlaylist();
+        if(removed_playing) {
+            playStates.playing = 0;
+            playMedia({manualPlay: true, startPlay: !displaying.elem.paused});
+        } else {
+            playStates.playing = getFollowOrder().indexOf(playing_id);
         }
         return;
     }
@@ -415,23 +470,18 @@ async function party() {
     function togglePlay() {
         if(displaying.elem) {
             displaying.elem.paused ? displaying.elem.play() : displaying.elem.pause();
-        } else if(((roomMode.activate && roomMode.order.length) || playStates.order.length) && playStates.playing === 0) {
+        } else if(((roomMode.activate && roomMode.order.length) || playStates.order.length) && playStates.playing === -1) {
             playNext(false);
         }
         manual_toggle_play = true;
     }
 
-    function playMedia(isManualPlay = false) {
+    function playMedia({manualPlay = false, startPlay = true}) {
         const media_list = roomMode.activate ? roomMode.playlist : playStates.playlist
-        const media = media_list[playStates.playing]
+        const media = media_list[getFollowOrder()[playStates.playing]]
         media.type === 'audio' ?
-            setAudioHls(`${BASE_URL}/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`) :
-            setVideoHls(`${BASE_URL}/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`)
-
-        if(document.querySelector("#playlist-main")) {
-            document.querySelector("#playlist-main .media.playing").classList.remove('playing');
-            document.querySelector(`#playlist-main #playlist-play-btn-${media.id}`).classList.add('playing');
-        }
+            setAudioHls(`${BASE_URL}/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`, startPlay) :
+            setVideoHls(`${BASE_URL}/playlist/${sessionID}/${media.id}/${media.filename}.m3u8`, startPlay)
 
         if(media.type === 'audio') {
             audio_title_container.style.display = 'block';
@@ -448,57 +498,37 @@ async function party() {
             audio_title_container.style.display = 'none';
         }
 
-        if(roomMode.activate && isManualPlay) roomMode.syncProgress()
+        if(roomMode.activate && manualPlay) roomMode.syncProgress()
     }
 
     function playNext(manual = true) {
         if(!(roomMode.activate && roomMode.order.length) && !playStates.order.length) return;
         if(playStates.how === 'single') {
-            playMedia(manual); return;
+            playMedia({manualPlay: manual}); return;
         }
-        const followOrder = 
-            roomMode.activate ? roomMode.order : 
-            playStates.how === 'random' ? playStates.random_order : 
-            playStates.order
-        const index = followOrder.indexOf(playStates.playing);
+        const followOrder = getFollowOrder();
         // if is last
-        if(index >= followOrder.length - 1) {
-            if(roomMode.activate) {
-                if(playStates.how === 'playlist') return;
-                else playStates.playing = followOrder[0];
-            } else {
-                switch(playStates.how) {
-                    case 'playlist': return;
-                    case 'random':
-                        playStates.random_order = shuffle(playStates.order);
-                        playStates.playing = playStates.random_order[0];
-                        break;
-                    case 'loop':
-                    default:
-                        playStates.playing = playStates.order[0];
-                        break;
-                }
-            }
-        } else playStates.playing = followOrder[index + 1]
-        playMedia(manual);
+        if(playStates.playing >= followOrder.length - 1) {
+            if(playStates.how === 'playlist') return;
+            playStates.playing = 0;
+            if(playStates.how === 'random')
+                playStates.random_order = shuffle(playStates.order)
+        } else playStates.playing ++;
+        playMedia({manualPlay: manual});
     }
 
     function playLast() {
         if((!(roomMode.activate && roomMode.order.length) && !playStates.order.length)) return;
         if(playStates.how === 'single') {
-            playMedia(true); return;
+            playMedia({manualPlay: true}); return;
         }
-        const followOrder = 
-            roomMode.activate ? roomMode.order : 
-            playStates.how === 'random' ? playStates.random_order : 
-            playStates.order
-        const index = followOrder.indexOf(playStates.playing);
+        const followOrder = getFollowOrder();
         // if is first
-        if(index <= 0) {
+        if(playStates.playing <= 0) {
             if(playStates.how === 'playlist') return;
-            else playStates.playing = followOrder.slice(-1)[0]
-        } else playStates.playing = followOrder[index - 1];
-        playMedia(true);
+            else playStates.playing = followOrder.length - 1
+        } else playStates.playing --;
+        playMedia({manualPlay: true});
     }
 
     function keyboardControl(evt) {
@@ -616,6 +646,28 @@ async function party() {
         const newVol = Math.max(Math.min(displaying.currentVolume + change, 1), 0);
         displaying.elem.volume = newVol;
     }
+    
+    function updatePlayIcon() {
+        if(displaying.elem) {
+            if(displaying.elem.paused) {
+                toggle_play_btn.innerHTML = Play;
+                toggle_play_btn.title = '播放';
+            } else {
+                toggle_play_btn.innerHTML = PauseFill;
+                toggle_play_btn.title = '暂停';
+            }
+        }
+        roomMode.activate && manual_toggle_play && roomMode.syncProgress();
+        manual_toggle_play = false;
+    }
+
+    function pauseTimerAction() {
+        if(displaying.elem) {
+            manual_toggle_play = true;
+            displaying.elem.pause();
+        }
+        pause_after = 0;
+    }
 
     function mediaElemEvtListeners() {
         let media_time_update_cooldown = 0;
@@ -627,22 +679,13 @@ async function party() {
                 total: 1
             })
         }
-        function updatePlayIcon() {
-            if(displaying.elem) {
-                if(displaying.elem.paused) {
-                    toggle_play_btn.innerHTML = Play;
-                    toggle_play_btn.title = '播放';
-                } else {
-                    toggle_play_btn.innerHTML = PauseFill;
-                    toggle_play_btn.title = '暂停';
-                }
-            }
-            roomMode.activate && manual_toggle_play && roomMode.syncProgress();
-            manual_toggle_play = false;
-        }
         function mediaTimeUpdated() {
-            if(Date.now() < media_time_update_cooldown && !manual_update_media_time) return;
-            media_time_update_cooldown = Date.now() + 100;
+            const current = Date.now();
+            if(pause_after && current >= pause_after) {
+                pauseTimerAction();
+            }
+            if(current < media_time_update_cooldown && !manual_update_media_time) return;
+            media_time_update_cooldown = current + 100;
 
             if(can_sync_media_time && roomMode.activate) roomMode.syncProgress();
 
@@ -749,10 +792,11 @@ async function party() {
             <div class='items'>
                 <div class='item clickable' id='user-center'><div>用户中心</div></div>
                 <div class='item clickable' id='get-playlist'><div>播放列表</div></div>
-                <div class='item clickable' id='update-playlist'><div>更新播放列表</div></div>
+                <div class='item clickable' id='pause-timer'><div>定时关闭</div></div>
                 <div class='item clickable' id='upload-media'><div>上传媒体文件</div></div>
                 <div class='item clickable' id='upload-manager'><div>管理我的上传</div></div>
                 <div class='item clickable' id='join-room-menu'><div>创建/加入房间</div></div>
+                <div class='item clickable' id='update-playlist'><div>更新播放列表</div></div>
                 <div class='item clickable' id='logout'><div>退出登录</div></div>
             </div>
         </div>
@@ -838,8 +882,8 @@ async function party() {
                     if(progress === 'finished') getPlaylist()
 
                     const msg = 
-                        progress === 'upload' ? `[${playlist_name}] 上传中... ${additional < 10 && '0' || ''}${additional}%` :
-                        progress === 'waiting-process' ? `[${playlist_name}] 生成分片文件中... ${additional < 10 && '0' || ''}${additional}%` :
+                        progress === 'upload' ? `[${playlist_name}] 上传中... ${`${additional}`.padStart(2, '0')}%` :
+                        progress === 'waiting-process' ? `[${playlist_name}] 生成分片文件中... ${`${additional}`.padStart(2, '0')}%` :
                         progress === 'finished' ? `[${playlist_name}] 上传完成!` : 
                         progress === 'aborted' ? `[${playlist_name}] 上传中断!` : 
                         progress === 'aborted-failed' ? `[${playlist_name}] 上传无法中断, 请等待上传完成后手动删除!` : 
@@ -999,35 +1043,241 @@ async function party() {
 
         cancelBtn.onclick = cleanUp;
     }
-    async function showPlaylist() {
+    function showPlaylist() {
+        let bulk_select_mode = false, selected_all = false;
+        let selectedPlaylists = {}
+        let bulkSelectBtns = { bulkSelect: null, bulkSelectAll: null }
+
+        function startBulkSelect(elem = null) {
+            bulk_select_mode = true;
+            elem && elem.click();
+        }
+
+        function endBulkSelect(removeElem = false) {
+            bulk_select_mode = false;
+            document.querySelectorAll('.media.bulk-selected')
+            .forEach(e=>removeElem ? e.remove() : e.classList.remove('bulk-selected'));
+            selectedPlaylists = {};
+        }
+
+        function clearBulkSelectBtns() {
+            bulkSelectBtns = { bulkSelect: null, bulkSelectAll: null }
+        }
+
+        function updateBtnText() {
+            selected_all = Object.keys(selectedPlaylists).length === loading_playlist_order.length
+
+            if(bulkSelectBtns.bulkSelect) {
+                bulkSelectBtns.bulkSelect.textContent = 
+                    bulk_select_mode ? '取消批量选择' : '批量选择';
+            }
+            if(bulkSelectBtns.bulkSelectAll) {
+                bulkSelectBtns.bulkSelectAll.textContent =
+                    selected_all ? '取消全选' : '全选'
+            }
+        }
+
+        function musicContextMenu(evt, id, index) {
+            evt.preventDefault && evt.preventDefault();
+            
+            const contextMenu = document.createElement('div');
+            contextMenu.className = 'playlist-context-menu'
+            contextMenu.style.left = `${evt.pageX}px`;
+            contextMenu.style.top = `${evt.pageY}px`;
+
+            const removeFromPlaylist = document.createElement('div');
+            removeFromPlaylist.className = 'item'
+            removeFromPlaylist.textContent = '删除'
+            removeFromPlaylist.onclick = () => {
+                if(playStates.how === 'random') {
+                    showNotification('当前播放顺序为随机顺序, 无法进行删除!', 'warn');
+                    return;
+                }
+                if(!bulk_select_mode) {
+                    if(!evt.target) {
+                        showNotification('请使用批量选择模式进行删除!')
+                        return;
+                    }
+                    bulk_select_mode = true;
+                    evt.target.click();
+                }
+
+                let modifying_order = roomMode.activate ? roomMode.order: playStates.order;
+                const playing_id = modifying_order[playStates.playing];
+                
+                modifying_order[playStates.playing] = -1;
+
+                for(const idx in selectedPlaylists) {
+                    modifying_order[idx] = null;
+                }
+
+                modifying_order = modifying_order.filter(e=>e !== null);
+                if(roomMode.activate) roomMode.order = modifying_order
+                else playStates.order = modifying_order
+
+                modifying_order = roomMode.activate ? roomMode.order: playStates.order;
+                const playingIdx = modifying_order.indexOf(-1)
+                if(playingIdx >= 0) {
+                    modifying_order[playingIdx] = playing_id;
+                    playStates.playing = playingIdx;
+                } else {
+                    playStates.playing = 0;
+                    playMedia({startPlay: displaying.elem && !displaying.elem.paused})
+                }
+
+                roomMode.activate && roomMode.requestUpdatePlaylist();
+
+                endBulkSelect(true);
+                closeContextMenu();
+                if(!playStates.order.length) showPlaylist();
+            }
+
+            const moveToFront = document.createElement('div');
+            moveToFront.className = 'item';
+            moveToFront.textContent = '移动到最前面';
+            moveToFront.onclick = () => {
+                if(playStates.how === 'random') {
+                    showNotification('当前播放顺序为随机顺序, 无法更改排序!', 'warn');
+                    return;
+                }
+                if(!bulk_select_mode) {
+                    if(!evt.target) {
+                        showNotification('请使用批量选择模式进行移动!')
+                        return;
+                    }
+                    bulk_select_mode = true;
+                    evt.target.click();
+                }
+                let modifying_order = roomMode.activate ? roomMode.order : playStates.order
+                let playing_id = -1;
+                if(playStates.playing >= 0) {
+                    playing_id = modifying_order[playStates.playing]
+                    if(Object.keys(selectedPlaylists).includes(`${playStates.playing}`)) {
+                        selectedPlaylists[playStates.playing] = -1;
+                    } else {
+                        modifying_order[playStates.playing] = -1;
+                    }
+                }
+
+                for(const idx in selectedPlaylists) {
+                    modifying_order[idx] = null;
+                }
+                const moved_playlists = Object.values(selectedPlaylists).concat(modifying_order.filter(e=>e!==null));
+
+                if(roomMode.activate) roomMode.order = moved_playlists
+                else playStates.order = moved_playlists
+
+                modifying_order = roomMode.activate ? roomMode.order : playStates.order
+                if(playing_id >= 0) {
+                    const playingIdx = modifying_order.indexOf(-1)
+                    modifying_order[playingIdx] = playing_id;
+                    playStates.playing = playingIdx;
+                }
+                roomMode.activate && roomMode.requestUpdatePlaylist()
+
+                endBulkSelect(true);
+                closeContextMenu();
+                showPlaylist();
+            }
+
+            const bulkSelect = document.createElement('div')
+            bulkSelect.className = 'item';
+            bulkSelect.onclick = () => {
+                if(bulk_select_mode) {
+                    endBulkSelect();
+                } else {
+                    startBulkSelect(evt.target);
+                }
+                updateBtnText();
+            }
+
+            const bulkSelectAll = document.createElement('div')
+            bulkSelectAll.className = 'item';
+            bulkSelectAll.onclick = () => {
+                if(selected_all) {
+                    endBulkSelect();
+                    bulk_select_mode = true;
+                } else {
+                    bulk_select_mode = true;
+                    document.querySelectorAll('#popup-window #playlist-main .media:not(.bulk-selected)')
+                    .forEach(e=>e.click());
+                }
+            }
+
+            const cancelOperate = document.createElement('div')
+            cancelOperate.className = 'item';
+            cancelOperate.textContent = '取消';
+            cancelOperate.onclick = closeContextMenu;
+
+            bulkSelectBtns = { bulkSelect, bulkSelectAll }
+            updateBtnText();
+
+            contextMenu.appendChild(removeFromPlaylist)
+            contextMenu.appendChild(moveToFront)
+            contextMenu.appendChild(bulkSelect)
+            contextMenu.appendChild(bulkSelectAll)
+            contextMenu.appendChild(cancelOperate)
+
+            showContextMenu(contextMenu, clearBulkSelectBtns)
+            contextMenu.style.left = `${evt.pageX}px`
+            contextMenu.style.top = `${evt.pageY}px`
+            if(contextMenuContainer.offsetWidth - (evt.pageX + contextMenu.offsetWidth) < 0) {
+                contextMenu.style.left = `${evt.pageX - contextMenu.offsetWidth}px`;
+            }
+            contextMenu.offsetWidth;
+            contextMenu.style.transitionDuration = '.5s';
+            contextMenu.style.transform = 'scaleY(1)';
+        }
+
         if(popupWindowVisibility) popupWindow.innerHTML = ''
 
         const playlist_main = document.createElement('div')
         playlist_main.id = 'playlist-main'
+
+        const editPlaylistBtn = document.createElement('div');
+        editPlaylistBtn.className = 'edit-playlist clickable'
+        editPlaylistBtn.innerHTML = PencilFill
+        playlist_main.appendChild(editPlaylistBtn);
+        editPlaylistBtn.onclick = evt => {
+            const {top, left, height} = evt.target.getBoundingClientRect();
+            musicContextMenu({pageX: left, pageY: top + height}, null, null)
+        }
         
-        const loading_playlist_order = roomMode.activate ? roomMode.order : playStates.order
+        const loading_playlist_order = getFollowOrder();
         const loading_playlist = roomMode.activate ? roomMode.playlist : playStates.playlist
         if(loading_playlist_order.length) {
-            loading_playlist_order.forEach(id=>{
+            loading_playlist_order.forEach((id, index)=>{
                 const media = loading_playlist[id];
                 if(!media) return;
 
                 const playBtn = document.createElement('div');
                 playBtn.className = 'media clickable'
-                media.id === playStates.playing && playBtn.classList.add('playing')
-                playBtn.id = `playlist-play-btn-${media.id}`;
+                index === playStates.playing && playBtn.classList.add('playing')
 
                 const playBtnText = document.createElement('div')
                 playBtnText.className = 'title-text';
                 playBtnText.textContent = media.title;
                 
                 playBtn.onclick = () => {
-                    const last_playing = document.querySelector('#popup-window #playlist-main .media.playing')
-                    last_playing && last_playing.classList.remove('playing')
-                    playBtn.classList.add('playing')
-                    playStates.playing = media.id;
-                    playMedia(true);
+                    if(bulk_select_mode) {
+                        if(selectedPlaylists[index]) {
+                            delete selectedPlaylists[index];
+                            playBtn.classList.remove('bulk-selected')
+                        } else {
+                            selectedPlaylists[index] = id;
+                            playBtn.classList.add('bulk-selected');
+                        }
+                        updateBtnText();
+                    } else {
+                        const last_playing = document.querySelector('#popup-window #playlist-main .media.playing')
+                        last_playing && last_playing.classList.remove('playing')
+                        playBtn.classList.add('playing')
+                        playStates.playing = index;
+                        playMedia({manualPlay: true});
+                    }
                 }
+
+                playBtn.oncontextmenu = evt => musicContextMenu(evt, id, index);
                 
                 playBtn.appendChild(playBtnText);
                 playlist_main.appendChild(playBtn);
@@ -1043,7 +1293,8 @@ async function party() {
     async function uploadManager() {
         function updateUploadingProgress(elem, displayElem, status, progress, isFirstTime = false) {
             const progress_percent = Math.floor(Math.max(progress * 100, 0))
-            elem.textContent = '上传进度: ' +
+            console.log(status)
+            elem.textContent = 
                 status === 'pending' ? '正在上传文件' : 
                 status === 'fragmenting' ? `正在进行文件分片, 进度${progress_percent}%` : 
                 '上传已完成'
@@ -1115,6 +1366,17 @@ async function party() {
                     }
                 }
 
+                const addToPlaylistBtn = document.createElement('div');
+                addToPlaylistBtn.className = 'function-btn clickable'
+                addToPlaylistBtn.textContent = '添加到播放列表'
+                addToPlaylistBtn.onclick = () => {
+                    roomMode.activate ?
+                        roomMode.order.push(id) :
+                        playStates.order.push(id);
+                    roomMode.activate && roomMode.requestUpdatePlaylist();
+                    showNotification('添加成功!')
+                }
+
                 const deleteBtn = document.createElement('div');
                 deleteBtn.className = 'function-btn clickable danger'
                 deleteBtn.textContent = '删除此文件'
@@ -1133,11 +1395,6 @@ async function party() {
                             if(!delete_result.error_msg && delete_result) {
                                 showNotification(`成功删除 [${title}]!`, 'success');
                                 manageBlock.remove();
-                                if(playlist_id) {
-                                    playStates.order.splice(playStates.order.indexOf(playlist_id), 1)
-                                    delete playStates.playlist[playlist_id]
-                                    if(roomMode.activate) roomMode.extra.deletePlaylist = playlist_id;
-                                }
                                 getPlaylist();
                                 if(interval_id) clearInterval(interval_id);
                             } else {
@@ -1154,6 +1411,7 @@ async function party() {
                 manageBlock.appendChild(statusDisplayBar);
                 manageBlock.appendChild(renameBtn);
                 manageBlock.appendChild(deleteBtn);
+                manageBlock.appendChild(addToPlaylistBtn);
                 upload_manager_main.appendChild(manageBlock);
 
                 updateUploadingProgress(statusText, statusDisplayBarBg, status, progress, true);
@@ -1164,9 +1422,9 @@ async function party() {
 
     }
     function room(roomCode = null) {
-        const ws_urls = /^(http|https):\/\/([^\/]*).*$/.exec(window.location.href).slice(1, 3)
-        const ws = new WebSocket(`ws${ws_urls[0] === 'https' ? 's' : ''}://${ws_urls[1]}/ws/room`);
-        let userID, roomID, joined_users = [], master = null;
+        const ws_urls = /^(http|https):\/\/(.*)$/.exec(BASE_URL).slice(1, 3)
+        const ws = new WebSocket(`ws${ws_urls[0].slice(4)}://${ws_urls[1]}/ws/room`);
+        let userID, roomID, joined_users = [], master = null, neverSynced = true;
 
         function handleMessage(msg) {
             switch(msg.msgType) {
@@ -1234,18 +1492,24 @@ async function party() {
             sendCurrentInfo('respond-sync')
         }
 
-        function syncPlaylist({playlistOrder, playlistInfo, howToPlay}) {
+        function syncPlaylist({playlistOrder, playlistInfo, howToPlay, playlistIdx}) {
             roomMode.order = playlistOrder;
             playStates.how = howToPlay;
-            playlistInfo && getPlaylist(playlistInfo);
+            playStates.playing = 
+                playlistIdx >= 0 ? playlistIdx : 
+                playStates.playing >= 0 ? playStates.playing : -1
+            if(playlistInfo) {
+                for(const media of playlistInfo) roomMode.playlist[media.id] = media;
+            }
         }
 
         function syncProgress(waiting_sync) {
-            const { playlistID, progress, isPaused } = waiting_sync;
-            if(playlistID !== playStates.playing) playStates.playing = playlistID;
-            playMedia();
+            if(neverSynced) neverSynced = false;
+            const { playlistIdx, progress, isPaused } = waiting_sync;
+            playStates.playing = playlistIdx;
+            playMedia({startPlay: !isPaused});
             displaying.elem.currentTime = progress
-            isPaused && displaying.elem.pause();
+            updatePlayIcon();
         }
 
         function requestUpdatePlaylist(wayOnly = false) {
@@ -1254,18 +1518,19 @@ async function party() {
                 ws.send(JSON.stringify({
                     msgType: 'switch-play-way',
                     roomID, userID,
-                    content: { howToPlay: playStates.how }
+                    content: { 
+                        howToPlay: playStates.how,
+                        playlistID: roomMode.order[playStates.playing],
+                    }
                 }))
             } else {
-                const content = { playlist: playStates.order }
-                if(roomMode.extra.deletePlaylist) {
-                    content.deletePlaylist = roomMode.extra.deletePlaylist;
-                    delete roomMode.extra.deletePlaylist
-                }
                 ws.send(JSON.stringify({
                     msgType: 'update-playlist',
                     roomID, userID,
-                    content
+                    content: { 
+                        playlist: roomMode.order,
+                        playlistIdx: playStates.playing
+                    }
                 }))
             }
         }
@@ -1274,10 +1539,10 @@ async function party() {
             ws.send(JSON.stringify({
                 roomID, userID, msgType,
                 content: {
-                    playlistID: playStates.playing,
+                    playlistIdx: playStates.playing,
                     progress: displaying.elem ? displaying.elem.currentTime : 0,
                     isPaused: displaying.elem ? displaying.elem.paused : true,
-                    date: Date.now()
+                    date: Date.now(), neverSynced
                 }
             }))
         }
@@ -1382,13 +1647,98 @@ async function party() {
         }
         
     }
+    function pauseTimer() {
+        function millisecondToMinute(millisecond) {
+            const seconds = Math.round(millisecond / 1000)
+            const minute = `${Math.floor(seconds / 60)}`.padStart(2, '0')
+            const second = `${seconds % 60}`.padStart(2, '0')
+            return `${minute}:${second}`
+        }
+
+        function updateTimeLeft() {
+            if(pause_after && popupWindowVisibility) requestAnimationFrame(updateTimeLeft)
+            if(pause_after) {
+                const now = Date.now();
+                if(now >= pause_after) {
+                    pauseTimerAction();
+                    pauseTimerInfo.textContent = '已停止播放';
+                } else {
+                    pauseTimerInfo.textContent = `将在${millisecondToMinute(pause_after - now)}后停止播放`;
+                }
+            } else {
+                pauseTimerInfo.textContent = '当前还未设置定时关闭'
+            }
+        }
+
+        function setTimer(minutes) {
+            if(!pause_after) requestAnimationFrame(updateTimeLeft);
+            pause_after = Date.now() + Math.floor(minutes * 60000);
+        }
+        popupWindow.innerHTML = ''
+        const pauseTimerMain = document.createElement('div')
+        pauseTimerMain.className = 'pause-timer-main'
+
+        const pauseTimerInfo = document.createElement('div');
+        pauseTimerInfo.className = 'info section';
+
+        const preSetTimers = document.createElement('div');
+        preSetTimers.className = 'pre-set-timers section'
+
+        for(let i = 1; i <= 6; i++) {
+            const timer_minutes = i*10;
+            const preSetTimer = document.createElement('div');
+            preSetTimer.className = 'timer clickable';
+            preSetTimer.textContent = timer_minutes;
+            preSetTimer.onclick = () => setTimer(timer_minutes);
+            preSetTimers.appendChild(preSetTimer)
+        }
+
+        const customTimerForm = document.createElement('form');
+        customTimerForm.className = 'custom-timer-form section';
+        customTimerForm.innerHTML = 
+        `<span>自定义<input name='customer-timer' type='text' value='${
+            localStorage.getItem('custom-pause-play-timer') || 45
+        }'>分钟后停止</span>`
+        customTimerForm.onsubmit = evt => {
+            evt.preventDefault();
+            const value = + evt.target['customer-timer'].value
+            if(!value || value < 1 || value > 1440) {
+                showNotification('自定义时间应为1-1440中的数字!');
+                return;
+            }
+            localStorage.setItem('custom-pause-play-timer', value);
+            setTimer(value);
+        }
+
+        const submitBtn = document.createElement('button')
+        submitBtn.className = 'clickable'
+        submitBtn.type = 'submit';
+        submitBtn.textContent = '设定计时器'
+
+        const cancelBtn = document.createElement('button')
+        cancelBtn.className = 'clickable'
+        cancelBtn.type = 'button';
+        cancelBtn.textContent = '取消计时器'
+        cancelBtn.onclick = () => { pause_after = 0 }
+
+        customTimerForm.appendChild(submitBtn)
+        customTimerForm.appendChild(cancelBtn)
+
+        pauseTimerMain.appendChild(pauseTimerInfo);
+        pauseTimerMain.appendChild(preSetTimers);
+        pauseTimerMain.appendChild(customTimerForm);
+        popupWindow.appendChild(pauseTimerMain);
+
+        requestAnimationFrame(updateTimeLeft)
+    }
 
     document.getElementById('user-center').onclick = () => {showNotification('这个功能还在开发中~')}
     document.getElementById('get-playlist').onclick = () => showPopup(showPlaylist);
-    document.getElementById('update-playlist').onclick = async () => { await getPlaylist(); showNotification('更新完成') };
+    document.getElementById('pause-timer').onclick = () => showPopup(pauseTimer);
     document.getElementById('upload-media').onclick = () => showPopup(uploadMediaFile);
     document.getElementById('upload-manager').onclick = () => showPopup(uploadManager);
     document.getElementById('join-room-menu').onclick = () => showPopup(roomPopup);
+    document.getElementById('update-playlist').onclick = async () => { await getPlaylist(); showNotification('更新完成') };
     document.getElementById('logout').onclick = () => {
         // clean up
         closePopup();
@@ -1453,7 +1803,8 @@ to { transform: translateX(-100%); }
 
 /* notifications */
 
-#popup-container {
+#popup-container,
+#context-menu-container {
     width: 100vw;
     height: 100vh;
     position: fixed;
@@ -1515,6 +1866,37 @@ to { transform: translateX(-100%); }
     padding: 20px;
 }
 
+/* context menu */
+#context-menu-container {
+    z-index: 100;
+    --menu-width: 300px;
+}
+#context-menu-container .context-menu {
+    width: var(--menu-width);
+    height: fit-content;
+    padding: 20px;
+    border: 1px solid black;
+    border-radius: 7px;
+    pointer-events: initial;
+    background-color: white;
+    position: fixed;
+}
+#context-menu-container .context-menu .item {
+    width: 100%;
+    border-radius: inherit;
+    height: fit-content;
+    font-size: 17px;
+    padding: 10px;
+}
+#context-menu-container .context-menu .item:hover {
+    background-color: #ededed;
+    cursor: pointer;
+}
+#context-menu-container .context-menu.playlist-context-menu {
+    transform-origin: top center;
+    transform: scaleY(0);
+    user-select: none;
+}
 /* login */
 
 #login-form {
@@ -1967,6 +2349,23 @@ to { transform: translateX(-100%); }
     border-radius: 5px;
     padding: 0px 5px;
     overflow: hidden;
+    user-select: none;
+}
+#playlist-main .edit-playlist {
+    width: fit-content;
+    height: fit-content;
+    margin: 10px 5px;
+}
+#playlist-main .edit-playlist i {
+    color: dodgerblue;
+    font-size: 20px;
+}
+#playlist-main .media.bulk-selected {
+    border: 1px solid red;
+    margin-bottom: 3px;
+}
+#playlist-main .media * {
+    pointer-events: none;
 }
 
 #playlist-main .media .title-text {
@@ -2108,6 +2507,70 @@ to { transform: translateX(-100%); }
     color: orange;
 }
 
+.pause-timer-main {
+    --pre-set-timer-size: 60px;
+    --pre-set-timers-margin: 20px;
+    --section-width: calc(var(--pre-set-timer-size) * 6 + var(--pre-set-timers-margin) * 5);
+    --common-font-size: 20px;
+}
+
+.pause-timer-main .info {
+    text-align: center;
+    font-size: calc(var(--common-font-size) * 1.5);
+}
+
+.pause-timer-main .pre-set-timers {
+    display: flex;
+    margin: auto;
+    width: var(--section-width);
+}
+
+.pause-timer-main .pre-set-timers .timer {
+    margin: auto;
+    border: 3px solid black;
+    text-align: center;
+    user-select: none;
+
+    width: var(--pre-set-timer-size);
+    height: var(--pre-set-timer-size);
+    line-height: calc(var(--pre-set-timer-size) - 3px);
+    font-size: calc(var(--pre-set-timer-size) / 3);
+    border-radius: var(--pre-set-timer-size);
+}
+
+.pause-timer-main .custom-timer-form {
+    margin: auto;
+    width: var(--section-width);
+    text-align: center;
+}
+.pause-timer-main .custom-timer-form span {
+    font-size: var(--common-font-size);
+    display: block;
+}
+.pause-timer-main .custom-timer-form input {
+    width: 50px;
+    height: fit-content;
+    font-size: var(--common-font-size);
+    text-align: center;
+    box-sizing: border-box;
+    border: none;
+    border-bottom: 1px solid black;
+    padding: 0px;
+}
+.pause-timer-main .custom-timer-form input:focus {
+    outline: none;
+}
+.pause-timer-main .custom-timer-form button {
+    width: 40%;
+    height: calc(var(--common-font-size) * 2);
+    margin: 20px;
+    border: 1px solid;
+    border-radius: 7px;
+    font-size: var(--common-font-size);
+}
+.pause-timer-main .section {
+    margin-top: 30px;
+}
 /* mobile view */
 @media screen and (max-width: 1023px) {
     .toastify {
@@ -2122,6 +2585,13 @@ to { transform: translateX(-100%); }
         width: 90%;
         margin: 25% 5%;
         border-radius: 15px;
+    }
+
+    #context-menu-container {
+        --menu-width: 400px;
+    }
+    #context-menu-container .context-menu .item {
+        font-size: 35px;
     }
 
     #login-form {
@@ -2237,6 +2707,10 @@ to { transform: translateX(-100%); }
         -webkit-text-stroke: 2px black;
     }
 
+    #playlist-main .edit-playlist i {
+        font-size: 40px;    
+    }
+
     #upload-media-container .upload-file-container {
         height: 500px;
     }
@@ -2311,11 +2785,29 @@ to { transform: translateX(-100%); }
         font-size: 40px;
         margin-bottom: 20px;
     }
+
+    .pause-timer-main {
+        --pre-set-timer-size: 100px;
+        --pre-set-timers-margin: 30px;
+        --common-font-size: 40px;
+    }
+    .pause-timer-main .custom-timer-form input {
+        width: 100px;
+    }
+    .pause-timer-main .custom-timer-form button {
+        margin: 30px;
+        border: 3px solid;
+        border-radius: 15px;
+    }
+    .pause-timer-main .section {
+        margin-top: 50px;
+    }
 }
         </style>
         <title>音趴</title>
     </head>
     <body>
+        <div id="context-menu-container"></div>
         <div id="notification-container"></div>
         <div id="popup-container"><div id="popup-window"></div></div>
         <div id="main"></div>
